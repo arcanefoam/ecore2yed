@@ -291,13 +291,13 @@ class Graph:
             for c in p.iterdescendants(tag='eClassifiers'):
                 for sf in c.iterdescendants(tag='eStructuralFeatures'):
                     self.add_eFeatures(c, sf, tree, create_external)
-                self.add_inheritance(c, tree)
+                self.add_inheritance(c, tree, create_external)
 
-    def add_inheritance(self, c, tree):
+    def add_inheritance(self, c, tree, create_external):
         try:
             super_types = c.attrib['eSuperTypes']
             for st in super_types.split(" "):
-                resolved_type, _ = self.resolve_type(tree, st)
+                resolved_type, _ = self.resolve_type(tree, st, create_external)
                 source = get_node_for_element(c)
                 target = get_node_for_element(resolved_type)
                 self.add_edge(source.id, target.id, inheritance=True)
