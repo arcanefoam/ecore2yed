@@ -14,6 +14,11 @@ location and that the location is accessible from where the script is run.
 You need to install the lxml package in your machine (Windows users might want to use [Conda](https://conda.io/docs/)
 to make this step easier).
 
+The project contains a Pipfile if you want to use [pipenv](https://docs.pipenv.org) (which I think you should if you
+use Python :) ).
+
+Running the script:
+
     $ python3 ecore2yed.py -h
     
     usage: ecore2yed.py [-h] [-e] [-o OUTPUT] [-v] input
@@ -27,3 +32,9 @@ to make this step easier).
       -o OUTPUT      the output yed file (*.graphml). If missing, same location as
                      input
       -v, --verbose  enables output messages (infos, warnings)
+
+With pipenv (shows the non-shell alternative):
+
+    $ pipenv install --python3
+    $ pipenv run python3  ecore2yed.py
+    
