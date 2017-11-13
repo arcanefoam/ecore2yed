@@ -4,7 +4,8 @@ ECore 2 YEd is a Python script to export [EMF](https://www.eclipse.org/modeling/
 [YEd](http://www.yworks.com/products/yed) graph (i.e. a graphml graph with additional formatting information).
 
 The purpose of the script is to take advantage of YEd's advanced features (layouts, formatting, high-res export) in
-order to produce high-quality images of the metamodel for use in publications and/or slides.
+order to produce high-quality images of the metamodel for use in publications and/or slides. The scripts populates
+classes, attributes and references. Formatting is kept to a minimum so the user can adjust it to her/his needs.
 
 External reference resolution is not fully supported. The script assumes that external references provide the metamodel
 location and that the location is accessible from where the script is run.
@@ -13,7 +14,8 @@ location and that the location is accessible from where the script is run.
 You need to install the lxml package in your machine (Windows users might want to use [Conda](https://conda.io/docs/)
 to make this step easier).
 
-
+    $ python3 ecore2yed.py -h
+    
     usage: ecore2yed.py [-h] [-e] [-o OUTPUT] [-v] input
 
     positional arguments:
