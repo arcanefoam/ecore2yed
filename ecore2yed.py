@@ -156,8 +156,6 @@ class Edge(Element):
     def __init__(self, id, source, target, *args, containment=False, inheritance=False):
 
         super().__init__(*args)
-        #if containment:     # Changes the direction so yEd layout works better
-        #    source, target = target, source
         self.edge = etree.Element('edge', id=id, source=source, target=target)
         self.id = id
         self.polyline_edge = etree.Element(y_ns + 'PolyLineEdge')
@@ -169,8 +167,9 @@ class Edge(Element):
             self.arrows.attrib['source'] = 'diamond'
             self.arrows.attrib['target'] = 'none'
         elif inheritance:
-            self.arrows.attrib['source'] = 'white_delta'
-            self.arrows.attrib['target'] = 'none'
+            source, target = target, source
+            self.arrows.attrib['source'] = 'none'
+            self.arrows.attrib['target'] = 'white_delta'
         else:
             self.arrows.attrib['source'] = 'none'
             self.arrows.attrib['target'] = 'plain'
