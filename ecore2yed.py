@@ -1,6 +1,6 @@
 import argparse
-import locale
 import os
+import warnings
 
 from lxml import etree
 
@@ -351,7 +351,7 @@ class Graph:
                 eOpposite = sf.attrib['eOpposite']
                 opp_prop_index = eOpposite.rfind('/')
                 opp_type = sf.attrib['eOpposite'][:opp_prop_index]
-                opp_element, _ = self.resolve_type(tree, opp_type)
+                opp_element, _ = self.resolve_type(tree, opp_type, create_external)
                 opp_prop_name = sf.attrib['eOpposite'][opp_prop_index + 1:]
                 xpath_exp = 'eStructuralFeatures[@name="{}"]'.format(opp_prop_name)
                 opp_sf = opp_element.xpath(xpath_exp)
@@ -423,10 +423,14 @@ class Graph:
             with open(ecore_file, 'r', ) as fin:
                 tree = etree.parse(fin)
         except FileNotFoundError as e:
-            raise EcoreReferenceError("The metamodel ({}) of an external reference could not be loaded.".format(mm_ref)) from e
-        # Find the EPackage name
-        epackage = tree.getroot()  # FIXME We assume 1 package
-        epackage_name = epackage.attrib['name']
+            warnings.warn("The metamodel ({}) for the external reference {} could not be loaded. Adding referenced "
+                          "type as string.".format(mm_ref, mm_type_path))
+            epackage_name = "Unknown"
+            create_external = False
+        else:
+            # Find the EPackage name
+            epackage = tree.getroot()  # FIXME We assume 1 package
+            epackage_name = epackage.attrib['name']
 
         type_name = mm_type_path.split('/')[-1]
         if create_external:
