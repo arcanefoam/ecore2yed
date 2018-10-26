@@ -7,8 +7,10 @@ from lxml import etree
 descmsg = 'Transform an Ecore metamodel to yed (graphml). For EReferences across metamodels, it assumes that the' \
           'referenced metamodel is accessible.'
 
+
 class EcoreReferenceError(Exception):
     pass
+
 
 def get_key_id():
     """
@@ -102,7 +104,7 @@ class ClassNode(Element):
     Creates a Class type Node
     """
 
-    def __init__(self, id, *args, external=False):
+    def __init__(self, id, abstract, *args, external=False):
         super().__init__(*args)
         self.node = etree.Element('node', id=id)
         self.id = id
@@ -111,13 +113,18 @@ class ClassNode(Element):
         etree.SubElement(self.generic_node, y_ns + 'Fill', hasColor="false", transparent="false")
         if external:
             etree.SubElement(self.generic_node, y_ns + 'BorderStyle', color="#000000", type="dashed", width="1.0")
+        fontStyle = 'plain'
+        if abstract == 'true':
+            fontStyle = 'italic'
         self.node_label = etree.Element(y_ns + 'NodeLabel',
                                         configuration='com.yworks.entityRelationship.label.name',
                                         autoSizePolicy='content',
                                         modelName='internal',
                                         modelPosition='t',
-                                        backgroundColor='#FFFFFF')
+                                        backgroundColor='#FFFFFF',
+                                        fontStyle=fontStyle)
         self.generic_node.append(self.node_label)
+
         self.attr_label = etree.Element(y_ns + 'NodeLabel',
                                         configuration='com.yworks.entityRelationship.label.attributes',
                                         autoSizePolicy='content',
@@ -266,7 +273,8 @@ class Graph:
             xmi_id_to_element[xmi_id] = element
         label = element.attrib['name']
         y_id = next(self.node_id)
-        n = ClassNode(y_id, self.node_graph_key.attrib['id'], self.node_desc_key.attrib['id'], external=external)
+        n = ClassNode(y_id, element.attrib.get('abstract', "false"), self.node_graph_key.attrib['id'],
+                      self.node_desc_key.attrib['id'], external=external)
         if xmi_id is not None:
             self.xmi_id_to_id[xmi_id] = y_id
         n.add_label(label)
