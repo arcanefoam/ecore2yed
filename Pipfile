@@ -7,4 +7,6 @@ name = "pypi"
 lxml = "*"
 
 
+
 [dev-packages]
+pytest = "*"

@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 import warnings
 
@@ -60,7 +61,9 @@ ecore_ns = '{{{0}}}'.format(ECORE_NAMESPACE)
 element_to_node = dict()
 node_to_element = dict()
 xmi_id_to_element = dict()  # Map xmi IDs to yed ids
+
 # Ecore location
+
 head = ""
 tail = ""
 
@@ -70,12 +73,24 @@ def get_element_for_node(node):
 
 
 def get_node_for_element(element):
-    return element_to_node[element]
+    try:
+        return element_to_node[element]
+    except KeyError:
+        return None
 
 
 def set_node_for_element(element, node):
     element_to_node[element] = node
     node_to_element[node] = element
+
+
+def add_ecore_class_to_graph():
+    """
+    For metamodels that have EReferences and/or ESuperTypes to ECore classes, we can add this known EClasses to the
+    graph
+    :return:
+    """
+    pass
 
 
 def bounds_to_string(lower, upper):
@@ -99,12 +114,19 @@ class Element:
         self.desc = etree.Element('data', key=desc_id)
 
 
-class ClassNode(Element):
+class EClassNode(Element):
     """
-    Creates a Class type Node
+    Nodes to represent EClasses
     """
 
     def __init__(self, id, abstract, *args, external=False):
+        """
+        Create a new EClass node.
+        :param id: the node id
+        :param abstract: True if the class is abstract
+        :param args: Additional format arguments
+        :param external: If the EClass is external (i.e. referenced metamodel)
+        """
         super().__init__(*args)
         self.node = etree.Element('node', id=id)
         self.id = id
@@ -147,20 +169,48 @@ class ClassNode(Element):
         self.node.append(self.graphics)
         self.node.append(self.desc)
 
-    def add_label(self, label):
+    def set_label_text(self, label):
+        """
+        Set the node label's text
+        :param label:
+        :return:
+        """
         self.node_label.text = label
 
-    def add_attribute(self, name, type, lower, upper):
+    def add_eattribute(self, name, attrtype, lower, upper, external=False):
+        """
+        Add an EAttribute to the node. Attributes are appended to the node's attribute label
+        :param name: The name of the attribute
+        :param attrtype: The type of the attribute
+        :param lower: The lower bound of the attribute
+        :param upper: The upper bound of the attribute
+        :return:
+        """
+
         bounds = '[{}]'.format(bounds_to_string(lower, upper))
+        if external:
+            attrtype = f"({attrtype})"
         if self.attr_label.text is None:
-            self.attr_label.text = "{0} : {1} {2}".format(name, type, bounds)
+            self.attr_label.text = "{0} : {1} {2}".format(name, attrtype, bounds)
         else:
-            self.attr_label.text += "\n{0} : {1} {2}".format(name, type, bounds)
+            self.attr_label.text += "\n{0} : {1} {2}".format(name, attrtype, bounds)
 
 
-class Edge(Element):
+class EReferenceEdge(Element):
+    """
+    EReferences are represented by edges in the graph
+    """
 
     def __init__(self, id, source, target, *args, containment=False, inheritance=False):
+        """
+        Create a new EReference edge
+        :param id: The edge id
+        :param source: The source node (from an EClass)
+        :param target: The target node (from an EClass)
+        :param args: Additional format arguments
+        :param containment: If the reference is containment
+        :param inheritance: If the reference is inheritance
+        """
 
         super().__init__(*args)
         self.edge = etree.Element('edge', id=id, source=source, target=target)
@@ -238,6 +288,7 @@ class Edge(Element):
 class Graph:
 
     def __init__(self, edgedefault='directed'):
+        self.logger = logging.getLogger(__name__)
         nsmap = {None: GRAPHML_NAMESPACE, 'xsi': XSI_NAMESPACE, 'y': YWORKS_NAMESPACE}  # the default namespace (no prefix)
         self.root = etree.Element('graphml', id='G', edgedefault=edgedefault, nsmap=nsmap)
         self.root.attrib[xsi_ns+'schemaLocation'] = 'http://graphml.graphdrawing.org/xmlns ' \
@@ -267,17 +318,23 @@ class Graph:
         self.root.append(key)
         return key
 
-    def add_node(self, element, external=False):
+    def add_eclass_node(self, element, external=False):
+        """
+        Add a new node to represent the
+        :param element:
+        :param external:
+        :return:
+        """
         xmi_id = element.attrib.get(xmi_ns + 'id', None)
         if xmi_id is not None:
             xmi_id_to_element[xmi_id] = element
         label = element.attrib['name']
         y_id = next(self.node_id)
-        n = ClassNode(y_id, element.attrib.get('abstract', "false"), self.node_graph_key.attrib['id'],
-                      self.node_desc_key.attrib['id'], external=external)
+        n = EClassNode(y_id, element.attrib.get('abstract', "false"), self.node_graph_key.attrib['id'],
+                       self.node_desc_key.attrib['id'], external=external)
         if xmi_id is not None:
             self.xmi_id_to_id[xmi_id] = y_id
-        n.add_label(label)
+        n.set_label_text(label)
         self.root.append(n.node)
         set_node_for_element(element, n)
 
@@ -288,8 +345,8 @@ class Graph:
         :return:
         """
         id = next(self.edge_id)
-        e = Edge(id, source, target, self.edge_graph_key.attrib['id'], self.edge_desc_key.attrib['id'],
-                 containment=containment, inheritance=inheritance)
+        e = EReferenceEdge(id, source, target, self.edge_graph_key.attrib['id'], self.edge_desc_key.attrib['id'],
+                           containment=containment, inheritance=inheritance)
         self.root.append(e.edge)
         return e
 
@@ -312,17 +369,18 @@ class Graph:
             pass
 
     def add_eFeatures(self, clazz, sf, tree, create_external):
+        self.logger.info(f"Adding feature {sf.attrib['name']} to {clazz.attrib['name']}")
         try:
             eType = sf.attrib['eType']
         except KeyError:
             # Can have a nested eGenericType, assume is only child
             gt = sf[0]
             eType = gt.attrib['eClassifier']
-        ext_type = None
+        # ext_type = None
         type_ref = None
         if ' ' in eType:  # The type is in another metamodel
             info = eType.split(' ')
-            ext_type = info[0]
+            # ext_type = info[0]
             type_ref = info[1]
         else:  # The type is from the metamodel
             type_ref = eType
@@ -334,11 +392,14 @@ class Graph:
         #    pass  # Fixme, what other datatypes can we have?
         lower = int(sf.attrib.get('lowerBound', "0"))
         upper = int(sf.attrib.get('upperBound', "1"))
-        if (sf.attrib[xsi_ns + 'type'] == 'ecore:EAttribute') or external:  # Add attribute to label
+        if sf.attrib[xsi_ns + 'type'] == 'ecore:EAttribute':
             cn = get_node_for_element(clazz)
             if isinstance(resolved_type, type(sf)):
                 resolved_type = resolved_type.attrib['name']
-            cn.add_attribute(sf.attrib['name'], resolved_type, lower, upper)
+            cn.add_eattribute(sf.attrib['name'], resolved_type, lower, upper)
+        elif external:
+            cn = get_node_for_element(clazz)
+            cn.add_eattribute(sf.attrib['name'], resolved_type, lower, upper, True)
         else:  # Create Edge
             source = get_node_for_element(clazz)
             target = get_node_for_element(resolved_type)
@@ -381,11 +442,15 @@ class Graph:
                 opp_edge.add_labels(containment, target_name, target_mult)
                 self.remove_edge(e)
 
-    def create_nodes(self, package):
+    def create_eclass_nodes(self, package):
+        """
+        Create nodes in the graph to represent all EClasses in the package
+        :param package: The package
+        """
         for element in package.iterdescendants():
             try:
                 if element.attrib[xsi_ns + 'type'] == 'ecore:EClass':
-                    self.add_node(element)
+                    self.add_eclass_node(element)
             except KeyError:
                 pass  # eAnnotations don't have a type
 
@@ -398,7 +463,7 @@ class Graph:
             mm_ref = info[0]
             mm_type_path = info[1]
             if mm_ref == 'http://www.eclipse.org/emf/2002/Ecore':
-                resolved_type = mm_type_path.strip('/')
+                return mm_type_path.strip('/'), True
             else:
                 if len(mm_ref) > 0:
                     return self.get_external_type(mm_ref, mm_type_path, create_external)
@@ -446,7 +511,7 @@ class Graph:
                 try:
                     if element.attrib[xsi_ns + 'type'] == 'ecore:EClass':
                         if element.attrib['name'] == type_name:
-                            self.add_node(element, external=True)
+                            self.add_eclass_node(element, external=True)
                             return element, False
                 except KeyError:
                     pass  # eAnnotations don't have a type
@@ -454,6 +519,19 @@ class Graph:
                                       .format(mm_type_path, mm_ref))
         else:
             return "{}::{}".format(epackage_name, type_name), True
+
+
+def create_graph_from_file(fin, create_external):
+    # Create a graph for the package.. one graph per package?
+    tree = etree.parse(fin)
+    fin.close()
+    g = Graph()
+    for element in tree.iter():
+        if element.tag == ecore_ns + 'EPackage':
+            g.create_eclass_nodes(element)
+            g.add_node_attributes(tree, create_external)  # This creates attributes and edges
+            break  # FIXME What if more than one package? add_node_attributes should be called after all packages
+    return g
 
 
 def main():
@@ -472,25 +550,16 @@ def main():
 
     args = parser.parse_args()
     head, tail = os.path.split(args.input)
-    fin = open(args.input, 'r',)
-    # Create a graph for the package.. one graph per package?
-    tree = etree.parse(fin)
-    fin.close()
-    for element in tree.iter():
-        if element.tag == ecore_ns + 'EPackage':
-            g = Graph()
-            g.create_nodes(element)
-            g.add_node_attributes(tree, args.create_external)     # This creates attributes and edges
-            break                           # FIXME What if more than one package? add_node_attributes should be called after all packages
+    with open(args.input, 'r',) as fin:
+        g = create_graph_from_file(fin, args.create_external)
 
     pretty = etree.tostring(g.root, pretty_print=True)
     encoded = pretty.decode('utf-8')
     if args.output is None:
         name = tail.split('.')[0]
         args.output = os.path.join(head, name + '.graphml')
-    fout = open(args.output, 'w', encoding='utf-8')
-    fout.write(encoded)
-    fout.close()
+    with open(args.output, 'w', encoding='utf-8') as fout:
+        fout.write(encoded)
     print("Transcription finished.")
 
 

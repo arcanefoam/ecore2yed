@@ -45,6 +45,7 @@ htmlcov/
 nosetests.xml
 coverage.xml
 *,cover
+*.pytest_cache
 
 # Translations
 *.mo
@@ -61,3 +62,5 @@ target/
 
 ## Directory-based project format:
 .idea/
+
+\.DS_Store
