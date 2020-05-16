@@ -1,12 +1,25 @@
 import argparse
+import configparser
 import logging
 import os
 import warnings
+import re
 
 from lxml import etree
 
 descmsg = 'Transform an Ecore metamodel to yed (graphml). For EReferences across metamodels, it assumes that the' \
           'referenced metamodel is accessible.'
+
+url_regex = re.compile(
+        r'^(?:http|ftp)s?://' # http:// or https://
+        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|' #domain...
+        r'localhost|' #localhost...
+        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})' # ...or ip
+        r'(?::\d+)?' # optional port
+        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+
+base_height = 30
+attribute_height = 18
 
 
 class EcoreReferenceError(Exception):
@@ -224,9 +237,8 @@ class EReferenceEdge(Element):
             self.arrows.attrib['source'] = 'diamond'
             self.arrows.attrib['target'] = 'none'
         elif inheritance:
-            source, target = target, source
-            self.arrows.attrib['source'] = 'none'
-            self.arrows.attrib['target'] = 'white_delta'
+            self.arrows.attrib['source'] = 'white_delta'
+            self.arrows.attrib['target'] = 'none'
         else:
             self.arrows.attrib['source'] = 'none'
             self.arrows.attrib['target'] = 'plain'
@@ -350,25 +362,25 @@ class Graph:
         self.root.append(e.edge)
         return e
 
-    def add_node_attributes(self, tree, create_external):
+    def add_node_attributes(self, tree, create_external, attribute_mult, schema_location):
         for p in tree.iter():       #FIXME Multipackage?
             for c in p.iterdescendants(tag='eClassifiers'):
                 for sf in c.iterdescendants(tag='eStructuralFeatures'):
-                    self.add_eFeatures(c, sf, tree, create_external)
-                self.add_inheritance(c, tree, create_external)
+                    self.add_eFeatures(c, sf, tree, create_external, attribute_mult, schema_location)
+                self.add_inheritance(c, tree, create_external, schema_location)
 
-    def add_inheritance(self, c, tree, create_external):
+    def add_inheritance(self, c, tree, create_external, schema_location):
         try:
             super_types = c.attrib['eSuperTypes']
             for st in super_types.split(" "):
-                resolved_type, _ = self.resolve_type(tree, st, create_external)
+                resolved_type, _ = self.resolve_type(tree, st, create_external, schema_location)
                 source = get_node_for_element(c)
                 target = get_node_for_element(resolved_type)
-                self.add_edge(source.id, target.id, inheritance=True)
+                self.add_edge(target.id, source.id, inheritance=True)
         except KeyError:
             pass
 
-    def add_eFeatures(self, clazz, sf, tree, create_external):
+    def add_eFeatures(self, clazz, sf, tree, create_external, attribute_mult, schema_location):
         self.logger.info(f"Adding feature {sf.attrib['name']} to {clazz.attrib['name']}")
         try:
             eType = sf.attrib['eType']
@@ -385,7 +397,7 @@ class Graph:
         else:  # The type is from the metamodel
             type_ref = eType
         # Resolve the type
-        resolved_type, external = self.resolve_type(tree, type_ref, create_external)
+        resolved_type, external = self.resolve_type(tree, type_ref, create_external, schema_location)
         # if ext_type == 'ecore:EDataType':  # Its a primitive
         #    ref_type = "Unknown"
         # else:
@@ -420,7 +432,7 @@ class Graph:
                 eOpposite = sf.attrib['eOpposite']
                 opp_prop_index = eOpposite.rfind('/')
                 opp_type = sf.attrib['eOpposite'][:opp_prop_index]
-                opp_element, _ = self.resolve_type(tree, opp_type, create_external)
+                opp_element, _ = self.resolve_type(tree, opp_type, create_external, schema_location)
                 opp_prop_name = sf.attrib['eOpposite'][opp_prop_index + 1:]
                 xpath_exp = 'eStructuralFeatures[@name="{}"]'.format(opp_prop_name)
                 opp_sf = opp_element.xpath(xpath_exp)
@@ -457,7 +469,7 @@ class Graph:
     def remove_edge(self, edge):
         self.root.remove(edge.edge)
 
-    def resolve_type(self, tree, type_ref, create_external):
+    def resolve_type(self, tree, type_ref, create_external, schema_location):
         if '#' in type_ref:  # It is an xpath like reference
             info = type_ref.split('#')
             mm_ref = info[0]
@@ -466,7 +478,7 @@ class Graph:
                 return mm_type_path.strip('/'), True
             else:
                 if len(mm_ref) > 0:
-                    return self.get_external_type(mm_ref, mm_type_path, create_external)
+                    return self.get_external_type(mm_ref, mm_type_path, create_external, schema_location)
                 # '/1/Port'
                 # '//EStringToStringMapEntry'
                 # '//*[1]//*[2]//eClassifiers[@name=\'BDD\']'
@@ -489,15 +501,21 @@ class Graph:
             resolved_type = xmi_id_to_element[type_ref]
         return resolved_type, False
 
-    def get_external_type(self, mm_ref, mm_type_path, create_external):
-        # FIXME Deal with relative paths, for now we assume same folder
-        ecore_file = os.path.join(head, mm_ref)
+    def get_external_type(self, mm_ref, mm_type_path, create_external, schema_location):
+        if re.match(url_regex, mm_ref) is not None:
+            # Check catalog
+            try:
+                ecore_file = os.path.join(head, schema_location[mm_ref])
+            except KeyError:
+                ecore_file = ""
+        else:
+            ecore_file = os.path.join(head, mm_ref)
         try:
             with open(ecore_file, 'r', ) as fin:
                 tree = etree.parse(fin)
         except FileNotFoundError as e:
             warnings.warn("The metamodel ({}) for the external reference {} could not be loaded. Adding referenced "
-                          "type as string.".format(mm_ref, mm_type_path))
+                          "type as string. See --catalog option.".format(mm_ref, mm_type_path))
             epackage_name = "Unknown"
             create_external = False
         else:
@@ -521,7 +539,7 @@ class Graph:
             return "{}::{}".format(epackage_name, type_name), True
 
 
-def create_graph_from_file(fin, create_external):
+def create_graph_from_file(fin, create_external,  attribute_mult, schema_location):
     # Create a graph for the package.. one graph per package?
     tree = etree.parse(fin)
     fin.close()
@@ -529,7 +547,7 @@ def create_graph_from_file(fin, create_external):
     for element in tree.iter():
         if element.tag == ecore_ns + 'EPackage':
             g.create_eclass_nodes(element)
-            g.add_node_attributes(tree, create_external)  # This creates attributes and edges
+            g.add_node_attributes(tree, create_external, attribute_mult, schema_location)  # This creates attributes and edges
             break  # FIXME What if more than one package? add_node_attributes should be called after all packages
     return g
 
@@ -542,16 +560,34 @@ def main():
                         action='store_true',
                         dest='create_external',
                         help='create nodes for external references.')
+    parser.add_argument('-a',
+                        action='store_true',
+                        dest='attribute_mult',
+                        help='Show multiplicities on attributes.')
     parser.add_argument('-o', type=str, dest='output',
                         help='the output yed file (*.graphml). If missing, same location as input')
+    parser.add_argument('--catalog', type=str, dest='catalog',
+                        help='Specifies catalog files to resolve external metamodel references. Supports the '
+                             'configuration file format and expects a "Schema Location" section where keys are URIs and'
+                             'values are file locations (locations can be absolute or relative to the input metamodel'
+                             'path).')
     parser.add_argument('-v', '--verbose',
                         action='store_true', dest='verbose',
                         help='enables output messages (infos, warnings)')
 
     args = parser.parse_args()
     head, tail = os.path.split(args.input)
+    config = configparser.ConfigParser(delimiters='=')
+
+    if args.catalog is not None:
+        config.read(args.catalog)
+        print(config)
+        print(config.sections())
     with open(args.input, 'r',) as fin:
-        g = create_graph_from_file(fin, args.create_external)
+        schema_location_ = {}
+        if 'Schema Location' in config:
+            schema_location_ = config['Schema Location']
+        g = create_graph_from_file(fin, args.create_external, args.attribute_mult, schema_location_)
 
     pretty = etree.tostring(g.root, pretty_print=True)
     encoded = pretty.decode('utf-8')
