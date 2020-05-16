@@ -190,7 +190,7 @@ class EClassNode(Element):
         """
         self.node_label.text = label
 
-    def add_eattribute(self, name, attrtype, lower, upper, external=False):
+    def add_eattribute(self, name, attrtype, lower, upper, hide_mult, external=False):
         """
         Add an EAttribute to the node. Attributes are appended to the node's attribute label
         :param name: The name of the attribute
@@ -199,14 +199,16 @@ class EClassNode(Element):
         :param upper: The upper bound of the attribute
         :return:
         """
-
+        frmt_attr = "{0} : {1} {2}"
+        if hide_mult:
+            frmt_attr = "{0} : {1}"
         bounds = '[{}]'.format(bounds_to_string(lower, upper))
         if external:
             attrtype = f"({attrtype})"
         if self.attr_label.text is None:
-            self.attr_label.text = "{0} : {1} {2}".format(name, attrtype, bounds)
+            self.attr_label.text = frmt_attr.format(name, attrtype, bounds)
         else:
-            self.attr_label.text += "\n{0} : {1} {2}".format(name, attrtype, bounds)
+            self.attr_label.text += "\n" + frmt_attr.format(name, attrtype, bounds)
 
 
 class EReferenceEdge(Element):
@@ -362,11 +364,11 @@ class Graph:
         self.root.append(e.edge)
         return e
 
-    def add_node_attributes(self, tree, create_external, attribute_mult, schema_location):
+    def add_node_attributes(self, tree, create_external, hide_mult, schema_location):
         for p in tree.iter():       #FIXME Multipackage?
             for c in p.iterdescendants(tag='eClassifiers'):
                 for sf in c.iterdescendants(tag='eStructuralFeatures'):
-                    self.add_eFeatures(c, sf, tree, create_external, attribute_mult, schema_location)
+                    self.add_eFeatures(c, sf, tree, create_external, hide_mult, schema_location)
                 self.add_inheritance(c, tree, create_external, schema_location)
 
     def add_inheritance(self, c, tree, create_external, schema_location):
@@ -380,7 +382,7 @@ class Graph:
         except KeyError:
             pass
 
-    def add_eFeatures(self, clazz, sf, tree, create_external, attribute_mult, schema_location):
+    def add_eFeatures(self, clazz, sf, tree, create_external, hide_mult, schema_location):
         self.logger.info(f"Adding feature {sf.attrib['name']} to {clazz.attrib['name']}")
         try:
             eType = sf.attrib['eType']
@@ -388,30 +390,22 @@ class Graph:
             # Can have a nested eGenericType, assume is only child
             gt = sf[0]
             eType = gt.attrib['eClassifier']
-        # ext_type = None
-        type_ref = None
         if ' ' in eType:  # The type is in another metamodel
             info = eType.split(' ')
-            # ext_type = info[0]
             type_ref = info[1]
         else:  # The type is from the metamodel
             type_ref = eType
-        # Resolve the type
         resolved_type, external = self.resolve_type(tree, type_ref, create_external, schema_location)
-        # if ext_type == 'ecore:EDataType':  # Its a primitive
-        #    ref_type = "Unknown"
-        # else:
-        #    pass  # Fixme, what other datatypes can we have?
         lower = int(sf.attrib.get('lowerBound', "0"))
         upper = int(sf.attrib.get('upperBound', "1"))
         if sf.attrib[xsi_ns + 'type'] == 'ecore:EAttribute':
             cn = get_node_for_element(clazz)
             if isinstance(resolved_type, type(sf)):
                 resolved_type = resolved_type.attrib['name']
-            cn.add_eattribute(sf.attrib['name'], resolved_type, lower, upper)
+            cn.add_eattribute(sf.attrib['name'], resolved_type, lower, upper, hide_mult)
         elif external:
             cn = get_node_for_element(clazz)
-            cn.add_eattribute(sf.attrib['name'], resolved_type, lower, upper, True)
+            cn.add_eattribute(sf.attrib['name'], resolved_type, lower, upper, hide_mult, True)
         else:  # Create Edge
             source = get_node_for_element(clazz)
             target = get_node_for_element(resolved_type)
@@ -539,7 +533,7 @@ class Graph:
             return "{}::{}".format(epackage_name, type_name), True
 
 
-def create_graph_from_file(fin, create_external,  attribute_mult, schema_location):
+def create_graph_from_file(fin, create_external, hide_mult, schema_location):
     # Create a graph for the package.. one graph per package?
     tree = etree.parse(fin)
     fin.close()
@@ -547,7 +541,7 @@ def create_graph_from_file(fin, create_external,  attribute_mult, schema_locatio
     for element in tree.iter():
         if element.tag == ecore_ns + 'EPackage':
             g.create_eclass_nodes(element)
-            g.add_node_attributes(tree, create_external, attribute_mult, schema_location)  # This creates attributes and edges
+            g.add_node_attributes(tree, create_external, hide_mult, schema_location)  # This creates attributes and edges
             break  # FIXME What if more than one package? add_node_attributes should be called after all packages
     return g
 
@@ -562,8 +556,8 @@ def main():
                         help='create nodes for external references.')
     parser.add_argument('-a',
                         action='store_true',
-                        dest='attribute_mult',
-                        help='Show multiplicities on attributes.')
+                        dest='hide_mult',
+                        help='Hide multiplicities on attributes.')
     parser.add_argument('-o', type=str, dest='output',
                         help='the output yed file (*.graphml). If missing, same location as input')
     parser.add_argument('--catalog', type=str, dest='catalog',
@@ -587,7 +581,7 @@ def main():
         schema_location_ = {}
         if 'Schema Location' in config:
             schema_location_ = config['Schema Location']
-        g = create_graph_from_file(fin, args.create_external, args.attribute_mult, schema_location_)
+        g = create_graph_from_file(fin, args.create_external, args.hide_mult, schema_location_)
 
     pretty = etree.tostring(g.root, pretty_print=True)
     encoded = pretty.decode('utf-8')
